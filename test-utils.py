@@ -1,7 +1,29 @@
+from functools import wraps
+from pathlib import Path
+from time import sleep
+from requests.exceptions import HTTPError
 import unittest
 
 from wayscript import utils
 from wayscript import context
+
+
+def _dumb_retry(exception_type, exception_filter, max_tries = 10):
+    def decorator(f):  # I wanted to do this as a context manager but context managers can't really repeat code
+        @wraps(f)
+        def _wrapper(*args, **kwargs):
+            nonlocal max_tries
+            while True:
+                try:
+                    return f(*args, **kwargs)
+                except exception_type as exc:
+                    if max_tries > 0 and exception_filter(exc):
+                        max_tries -= 1
+                        sleep(1)
+                    else:
+                        raise
+        return _wrapper
+    return decorator
 
 
 class TestEnvironment(unittest.TestCase):
@@ -65,7 +87,12 @@ class TestClient(unittest.TestCase):
         response.raise_for_status()
         self.assertNotIn('error', response.json())
 
+    @_dumb_retry(HTTPError, lambda exception: exception.response.status_code == 404)
     def test_set_lair_secret(self):
+        Path('.secrets').touch()
+        # To set lair secrets a .secrets file must exist.
+        # Sometimes WayScript takes a second to realize we've created this so there's an automatic retry
+
         lair_id = context.get_lair()['id']
         key = 'password'
         value = 'swordfish'
